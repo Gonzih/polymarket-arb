@@ -2,22 +2,32 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.polymarket-arb</string>
+  <key>Label</key>
+  <string>com.polymarket-arb</string>
+
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/bin/npx</string>
-    <string>-y</string>
-    <string>@gonzih/polymarket-arb</string>
-    <string>--paper</string>
+    <string>/usr/local/bin/docker</string>
+    <string>run</string>
+    <string>--rm</string>
+    <string>--name</string>
+    <string>polymarket-arb</string>
+    <string>-v</string>
+    <string>/Users/feral/.polymarket-arb:/root/.polymarket-arb</string>
+    <string>-e</string>
+    <string>CLAUDE_CODE_OAUTH_TOKEN=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</string>
+    <string>-e</string>
+    <string>PAPER_MODE=true</string>
+    <string>ghcr.io/gonzih/polymarket-arb:latest</string>
   </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>ANTHROPIC_API_KEY</key><string>REPLACE_ME</string>
-    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-  </dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/Users/feral/.polymarket-arb/polymarket-arb.log</string>
-  <key>StandardErrorPath</key><string>/Users/feral/.polymarket-arb/polymarket-arb-error.log</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/feral/.polymarket-arb/polymarket-arb.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/feral/.polymarket-arb/polymarket-arb-error.log</string>
 </dict>
 </plist>

@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  polymarket-arb:
+    build: .
+    restart: unless-stopped
+    environment:
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      - PAPER_MODE=true
+    volumes:
+      - ~/.polymarket-arb:/root/.polymarket-arb
