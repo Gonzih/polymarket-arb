@@ -16,7 +16,6 @@ Options:
   --help        Show this help
 
 Environment variables:
-  ANTHROPIC_API_KEY     Required — Claude API key for trade analysis
   POLYMARKET_API_KEY    Required for live trading
   POLYMARKET_SECRET     Required for live trading
   PAPER_MODE=true       Default paper mode (overridden by --live flag)
@@ -36,11 +35,6 @@ const paperMode = args.includes("--live")
 
 if (!paperMode && !process.env.POLYMARKET_API_KEY) {
   console.error("ERROR: --live mode requires POLYMARKET_API_KEY environment variable");
-  process.exit(1);
-}
-
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.error("ERROR: ANTHROPIC_API_KEY environment variable is required");
   process.exit(1);
 }
 
