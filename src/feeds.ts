@@ -26,6 +26,10 @@ export class FeedManager {
   private stopped = false;
   private coinbaseLastMessageAt = 0;
   private coinbaseHeartbeatTimer: NodeJS.Timeout | null = null;
+  private totalTicks = 0;
+  private lastBtcPrice = 0;
+  private lastEthPrice = 0;
+  private lastTickHeartbeatAt = 0;
 
   onPrice(handler: PriceUpdateHandler): void {
     this.handlers.push(handler);
@@ -151,9 +155,18 @@ export class FeedManager {
             const symbol: "BTC" | "ETH" = trade.product_id.startsWith("BTC") ? "BTC" : "ETH";
             const price = parseFloat(trade.price);
             if (!isNaN(price)) {
+              if (symbol === "BTC") this.lastBtcPrice = price;
+              else this.lastEthPrice = price;
+              this.totalTicks++;
               this.emit({ symbol, price, timestamp: Date.now(), source: "coinbase" });
             }
           }
+        }
+        // log heartbeat every 100 ticks or every 60 seconds
+        const now = Date.now();
+        if (this.totalTicks > 0 && (this.totalTicks % 100 === 0 || now - this.lastTickHeartbeatAt >= 60_000)) {
+          log("info", { source: "coinbase", event: "tick_heartbeat", btcPrice: this.lastBtcPrice, ethPrice: this.lastEthPrice, tickCount: this.totalTicks });
+          this.lastTickHeartbeatAt = now;
         }
       } catch {
         // ignore malformed

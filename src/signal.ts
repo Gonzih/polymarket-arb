@@ -1,4 +1,5 @@
 import type { PriceTick } from "./feeds.js";
+import { log } from "./logger.js";
 
 export type MomentumSignal = {
   symbol: "BTC" | "ETH";
@@ -13,8 +14,11 @@ const WINDOW_MS = 30_000; // 30 seconds
 const MOMENTUM_THRESHOLD = 0.0035; // 0.35%
 const MAX_TICKS = 20; // keep last N ticks per symbol for history
 
+const DEBUG_HEARTBEAT_MS = 5 * 60_000; // 5 minutes
+
 export class SignalEngine {
   private ticks: Map<string, PriceTick[]> = new Map();
+  private lastDebugAt: Map<string, number> = new Map();
 
   addTick(tick: PriceTick): MomentumSignal | null {
     const key = tick.symbol;
@@ -46,7 +50,14 @@ export class SignalEngine {
     const newest = recent[recent.length - 1].price;
     const momentum = (newest - oldest) / oldest;
 
-    if (Math.abs(momentum) < MOMENTUM_THRESHOLD) return null;
+    if (Math.abs(momentum) < MOMENTUM_THRESHOLD) {
+      const lastDebug = this.lastDebugAt.get(symbol) ?? 0;
+      if (now - lastDebug >= DEBUG_HEARTBEAT_MS) {
+        log("info", { event: "signal_evaluated", symbol, momentum, threshold: MOMENTUM_THRESHOLD, fired: false });
+        this.lastDebugAt.set(symbol, now);
+      }
+      return null;
+    }
 
     return {
       symbol,
