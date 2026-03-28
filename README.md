@@ -49,7 +49,7 @@ POLYMARKET_API_KEY=... POLYMARKET_SECRET=... polymarket-arb --live
 
 ## Logs
 
-Structured JSON logs written to `~/.polymarket-arb/trades.jsonl`. Each line is a JSON object with `timestamp`, `level`, and event-specific fields.
+Structured JSON logs written to `~/.polymarket-arb/polymarket-arb.log`. Each line is a JSON object with `timestamp`, `level`, and event-specific fields.
 
 ## macOS daemon (launchd)
 
