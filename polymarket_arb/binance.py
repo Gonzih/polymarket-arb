@@ -196,7 +196,7 @@ class CoinbaseFeed:
       BTC-USD → BTCUSDT,  ETH-USD → ETHUSDT
     """
 
-    WS_URL = "wss://advanced-trade-api.coinbase.com/ws/market-data"
+    WS_URL = "wss://advanced-trade-ws.coinbase.com"
     _PRODUCT_MAP: Dict[str, str] = {"BTC-USD": "BTCUSDT", "ETH-USD": "ETHUSDT"}
 
     def __init__(
@@ -344,7 +344,7 @@ class PriceFeedManager:
 
     _FALLBACK_N = 5           # geo-block errors before switching
     _FALLBACK_WINDOW = 30.0   # sliding window (seconds)
-    _RETRY_INTERVAL = 600.0   # Binance retry interval (10 minutes)
+    _RETRY_INTERVAL = 86400.0  # Binance retry interval (24 hours)
 
     def __init__(
         self,

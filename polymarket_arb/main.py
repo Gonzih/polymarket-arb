@@ -94,9 +94,14 @@ class ArbBot:
         now = time.time()
         if now - self._last_signal_scan > 1.0:
             self._last_signal_scan = now
-            asyncio.get_event_loop().call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._scan_signals())
-            )
+            try:
+                loop = asyncio.get_event_loop()
+                if not loop.is_closed():
+                    loop.call_soon_threadsafe(
+                        lambda: asyncio.ensure_future(self._scan_signals())
+                    )
+            except RuntimeError:
+                pass
 
     async def _scan_signals(self):
         """Scan all active contracts for tradeable edges."""
@@ -364,7 +369,8 @@ def main():
     def _shutdown(sig, frame):
         logger.info("Received signal %s — initiating shutdown", sig)
         bot._running = False
-        loop.stop()
+        # Do NOT call loop.stop() — that aborts run_until_complete with RuntimeError.
+        # Setting _running=False lets bot.run()'s while-loop exit on the next tick.
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
