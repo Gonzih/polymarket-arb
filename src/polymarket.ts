@@ -18,25 +18,20 @@ export type OrderResult = {
   status: string;
 };
 
-const GRAPHQL_QUERY = `
-query OpenContracts($symbol: String!) {
-  markets(
-    where: {
-      active: true,
-      closed: false,
-      question_contains: $symbol
-    },
-    orderBy: endDate,
-    orderDirection: asc
-  ) {
-    id
-    question
-    endDate
-    outcomePrices
-    outcomes
-  }
+type RestMarket = {
+  id: string;
+  question: string;
+  endDate: string;
+  outcomePrices: string | string[];
+  outcomes: string | string[];
+  active: boolean;
+  closed: boolean;
+};
+
+function parseJsonField(field: string | string[]): string[] {
+  if (Array.isArray(field)) return field;
+  try { return JSON.parse(field); } catch { return []; }
 }
-`;
 
 function parseDirection(question: string): "up" | "down" | null {
   const q = question.toLowerCase();
@@ -49,44 +44,34 @@ export async function fetchContracts(symbol: "BTC" | "ETH"): Promise<Contract[]>
   const now = Date.now();
   const maxExpiry = now + 20 * 60 * 1000; // 20 min from now
 
+  const symbolKeywords: Record<"BTC" | "ETH", string[]> = {
+    BTC: ["BTC", "Bitcoin", "bitcoin"],
+    ETH: ["ETH", "Ethereum", "ethereum"],
+  };
+
   try {
-    const res = await fetch(`${GAMMA_API}/graphql`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: GRAPHQL_QUERY,
-        variables: { symbol },
-      }),
-    });
+    const url = `${GAMMA_API}/markets?active=true&closed=false&limit=200`;
+    const res = await fetch(url);
 
     if (!res.ok) {
-      log("warn", { source: "polymarket", event: "graphql_error", status: res.status });
+      log("warn", { source: "polymarket", event: "rest_error", status: res.status });
       return [];
     }
 
-    const data = (await res.json()) as {
-      data?: {
-        markets?: Array<{
-          id: string;
-          question: string;
-          endDate: string;
-          outcomePrices: string[];
-          outcomes: string[];
-        }>;
-      };
-    };
-
-    const markets = data?.data?.markets ?? [];
+    const markets = (await res.json()) as RestMarket[];
+    const keywords = symbolKeywords[symbol];
     const contracts: Contract[] = [];
 
     for (const m of markets) {
+      if (!keywords.some((k) => m.question?.includes(k))) continue;
+
       const expiresAt = new Date(m.endDate).getTime();
       if (expiresAt > maxExpiry || expiresAt < now) continue;
 
       const direction = parseDirection(m.question);
       if (!direction) continue;
 
-      const prices = m.outcomePrices?.map(Number) ?? [0.5, 0.5];
+      const prices = parseJsonField(m.outcomePrices).map(Number);
       contracts.push({
         id: m.id,
         question: m.question,
