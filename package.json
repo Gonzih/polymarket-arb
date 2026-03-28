@@ -1,6 +1,6 @@
 {
   "name": "polymarket-arb",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Polymarket latency arbitrage bot — paper trading daemon with BTC/ETH 5/15-min contract monitoring",
   "keywords": [
     "polymarket",
