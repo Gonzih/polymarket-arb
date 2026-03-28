@@ -26,14 +26,9 @@ logger = logging.getLogger("polymarket_arb")
 def setup_logging(log_path: str, verbose: bool = False):
     level = logging.DEBUG if verbose else logging.INFO
     fmt = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+    # Use stdout only — launchd redirects stdout to the log file via StandardOutPath.
+    # Adding a FileHandler would cause double-logging when running as a daemon.
     handlers = [logging.StreamHandler(sys.stdout)]
-
-    try:
-        Path(log_path).parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(log_path))
-    except Exception:
-        pass
-
     logging.basicConfig(level=level, format=fmt, handlers=handlers)
 
 
