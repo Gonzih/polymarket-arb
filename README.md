@@ -45,6 +45,7 @@ POLYMARKET_API_KEY=... POLYMARKET_SECRET=... polymarket-arb --live
 | `POLYMARKET_SECRET` | Live only | — | Polymarket API secret |
 | `PAPER_MODE` | No | `true` | Set `false` for live trading |
 | `LOG_DIR` | No | `~/.polymarket-arb` | Log directory |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Docker only | — | Claude OAuth token (same one used by cc-agent/cc-tg). Required in Docker; optional on host if already authenticated via `claude` CLI. |
 
 ## Logs
 
