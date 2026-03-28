@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .config import Config
-from .binance import BinanceClient, PriceState
+from .binance import PriceFeedManager, PriceState
 from .polymarket import PolymarketClient, Contract
 from .signal import calculate_signal, Signal
 from .risk import RiskManager, KillSwitchError, TotalShutdownError, PositionRecord
@@ -75,11 +75,12 @@ class ArbBot:
             private_key=config.polymarket_private_key,
             paper=paper,
         )
-        self.binance = BinanceClient(
+        self.binance = PriceFeedManager(
             price_state=self.price_state,
             ws_url=config.binance_ws_url,
             streams=config.binance_streams,
             on_kline=self._on_kline,
+            price_feed=config.price_feed,
         )
         self.dashboard: Optional[Dashboard] = None
         self._running = False

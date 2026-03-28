@@ -29,6 +29,9 @@ class Config:
         default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID")
     )
 
+    # Price feed: "auto" (Binance with Coinbase fallback), "binance", or "coinbase"
+    price_feed: str = os.getenv("PRICE_FEED", "auto")
+
     # Binance WebSocket
     binance_ws_url: str = "wss://stream.binance.com:9443"
     binance_streams: list = field(
