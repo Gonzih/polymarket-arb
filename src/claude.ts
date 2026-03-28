@@ -43,7 +43,14 @@ Respond with JSON only, no markdown:
     const { stdout } = await execFileAsync(
       "claude",
       ["--print", "--model", "claude-haiku-4-5-20251001", prompt],
-      { timeout: 15000 }
+      {
+        timeout: 15000,
+        env: {
+          ...process.env,
+          CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '',
+          ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '',
+        },
+      }
     );
 
     const jsonMatch = stdout.match(/\{[\s\S]*\}/);

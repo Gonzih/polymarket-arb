@@ -45,6 +45,12 @@ log("info", {
   nodeVersion: process.version,
 });
 
+if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+  log("info", { event: "claude_auth", method: "oauth_token" });
+} else {
+  log("warn", { event: "claude_auth", method: "credential_file", note: "no CLAUDE_CODE_OAUTH_TOKEN set" });
+}
+
 const daemon = new TradingDaemon(paperMode);
 daemon.start();
 
