@@ -2,30 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>com.polymarket-arb</string>
+  <key>Label</key><string>com.polymarket-arb</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/tmp/polymarket_arb_venv/bin/python3</string>
-    <string>-m</string>
-    <string>polymarket_arb</string>
+    <string>/opt/homebrew/bin/npx</string>
+    <string>-y</string>
+    <string>@gonzih/polymarket-arb</string>
     <string>--paper</string>
-    <string>--no-dashboard</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PYTHONPATH</key>
-    <string>/private/var/folders/t2/jntsnd7j4d346ryrjr0pg2hh0000gr/T/cc-agent-200c1a95-GTFDEB</string>
+    <key>ANTHROPIC_API_KEY</key><string>REPLACE_ME</string>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
-  <key>KeepAlive</key>
-  <true/>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>/Users/feral/.polymarket-arb/polymarket-arb.log</string>
-  <key>StandardErrorPath</key>
-  <string>/Users/feral/.polymarket-arb/polymarket-arb-error.log</string>
-  <key>WorkingDirectory</key>
-  <string>/Users/feral</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/feral/.polymarket-arb/polymarket-arb.log</string>
+  <key>StandardErrorPath</key><string>/Users/feral/.polymarket-arb/polymarket-arb-error.log</string>
 </dict>
 </plist>
