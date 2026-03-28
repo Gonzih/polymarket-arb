@@ -1,6 +1,6 @@
 {
   "name": "@gonzih/polymarket-arb",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Claude-powered Polymarket arbitrage bot — BTC/ETH momentum signal + AI trade analysis",
   "keywords": [
     "polymarket",
@@ -28,7 +28,10 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "node dist/index.js --help"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -44,9 +47,11 @@
     "ws": "8.18.1"
   },
   "devDependencies": {
-    "@types/ws": "8.5.14",
     "@types/node": "22.13.14",
+    "@types/ws": "8.5.14",
+    "@vitest/coverage-v8": "4.1.2",
+    "tsx": "4.19.3",
     "typescript": "5.8.2",
-    "tsx": "4.19.3"
+    "vitest": "4.1.2"
   }
 }
