@@ -1,9 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import type { MomentumSignal } from "./signal.js";
 import type { Contract } from "./polymarket.js";
 import { log } from "./logger.js";
 
-const MODEL = "claude-haiku-4-5-20251001";
+const execFileAsync = promisify(execFile);
 
 export type TradeAnalysis = {
   confidence: number;
@@ -12,27 +13,15 @@ export type TradeAnalysis = {
   enter: boolean;
 };
 
-let client: Anthropic | null = null;
-
-function getClient(): Anthropic {
-  if (!client) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required");
-    client = new Anthropic({ apiKey });
-  }
-  return client;
-}
-
 export async function analyzeTradeOpportunity(
   signal: MomentumSignal,
   contract: Contract
 ): Promise<TradeAnalysis | null> {
   const momentumPct = (signal.momentum * 100).toFixed(3);
   const direction = signal.direction === "down" ? "dropped" : "rose";
-  const contractOdds = contract.direction === "down" ? contract.yesPrice : contract.yesPrice;
+  const contractOdds = contract.yesPrice;
   const minutesToExpiry = Math.round((contract.expiresAt - Date.now()) / 60_000);
 
-  // Implied real probability based on momentum direction matching contract
   const impliedProb = signal.direction === contract.direction ? 0.75 : 0.35;
   const impliedEdge = Math.abs(impliedProb - contractOdds);
 
@@ -47,27 +36,19 @@ Current price: ${signal.currentPrice}
 
 Assess: Does the momentum signal justify a bet on this contract? Consider momentum strength, edge size, time to expiry, and signal-contract alignment.
 
-Respond with JSON only:
+Respond with JSON only, no markdown:
 {"confidence": 0.0-1.0, "kelly_fraction": 0.0-0.1, "reasoning": "brief explanation", "enter": true/false}`;
 
   try {
-    const anthropic = getClient();
-    const message = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 256,
-      messages: [{ role: "user", content: prompt }],
-    });
+    const { stdout } = await execFileAsync(
+      "claude",
+      ["--print", "--model", "claude-haiku-4-5-20251001", prompt],
+      { timeout: 15000 }
+    );
 
-    const content = message.content[0];
-    if (content.type !== "text") {
-      log("warn", { source: "claude", event: "unexpected_response_type" });
-      return null;
-    }
-
-    // Extract JSON from response (may have surrounding text)
-    const jsonMatch = content.text.match(/\{[^}]+\}/s);
+    const jsonMatch = stdout.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      log("warn", { source: "claude", event: "no_json_in_response", text: content.text });
+      log("warn", { source: "claude", event: "no_json_in_response", text: stdout });
       return null;
     }
 
