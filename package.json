@@ -1,0 +1,38 @@
+{
+  "name": "polymarket-arb",
+  "version": "0.1.0",
+  "description": "Polymarket latency arbitrage bot — paper trading daemon with BTC/ETH 5/15-min contract monitoring",
+  "keywords": [
+    "polymarket",
+    "arbitrage",
+    "trading",
+    "crypto",
+    "defi",
+    "btc",
+    "eth"
+  ],
+  "homepage": "https://github.com/Gonzih/polymarket-arb",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gonzih/polymarket-arb.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "polymarket-arb": "./launcher.js"
+  },
+  "main": "launcher.js",
+  "scripts": {
+    "test": "node launcher.js --help"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "files": [
+    "launcher.js",
+    "README.md",
+    "RESEARCH.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
