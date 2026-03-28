@@ -10,7 +10,7 @@ if (!fs.existsSync(LOG_DIR)) {
   fs.mkdirSync(LOG_DIR, { recursive: true });
 }
 
-const logFile = path.join(LOG_DIR, "trades.jsonl");
+const logFile = path.join(LOG_DIR, "polymarket-arb.log");
 
 export function log(level: "info" | "warn" | "error" | "trade", data: Record<string, unknown>): void {
   const entry = { timestamp: new Date().toISOString(), level, ...data };

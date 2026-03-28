@@ -24,6 +24,8 @@ export class FeedManager {
   private binanceBlocked = false;
   private binanceRetryTimer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private coinbaseLastMessageAt = 0;
+  private coinbaseHeartbeatTimer: NodeJS.Timeout | null = null;
 
   onPrice(handler: PriceUpdateHandler): void {
     this.handlers.push(handler);
@@ -41,6 +43,7 @@ export class FeedManager {
   stop(): void {
     this.stopped = true;
     if (this.binanceRetryTimer) clearTimeout(this.binanceRetryTimer);
+    if (this.coinbaseHeartbeatTimer) clearInterval(this.coinbaseHeartbeatTimer);
     this.binanceWs?.close();
     this.coinbaseWs?.close();
   }
@@ -105,6 +108,18 @@ export class FeedManager {
     }, BINANCE_RETRY_MS);
   }
 
+  private startCoinbaseHeartbeat(): void {
+    if (this.coinbaseHeartbeatTimer) clearInterval(this.coinbaseHeartbeatTimer);
+    this.coinbaseHeartbeatTimer = setInterval(() => {
+      if (this.stopped) return;
+      const staleMs = Date.now() - this.coinbaseLastMessageAt;
+      if (this.coinbaseLastMessageAt > 0 && staleMs > 90_000) {
+        log("info", { source: "coinbase", event: "coinbase:reconnecting", reason: "no_message_90s", staleMs });
+        this.coinbaseWs?.close();
+      }
+    }, 60_000);
+  }
+
   private connectCoinbase(): void {
     if (this.stopped) return;
 
@@ -113,6 +128,8 @@ export class FeedManager {
 
     ws.on("open", () => {
       log("info", { source: "coinbase", event: "connected" });
+      this.coinbaseLastMessageAt = Date.now();
+      this.startCoinbaseHeartbeat();
       ws.send(
         JSON.stringify({
           type: "subscribe",
@@ -123,6 +140,7 @@ export class FeedManager {
     });
 
     ws.on("message", (raw: Buffer) => {
+      this.coinbaseLastMessageAt = Date.now();
       try {
         const msg = JSON.parse(raw.toString());
         if (msg.channel !== "market_trades") return;
@@ -147,6 +165,7 @@ export class FeedManager {
     });
 
     ws.on("close", () => {
+      if (this.coinbaseHeartbeatTimer) clearInterval(this.coinbaseHeartbeatTimer);
       if (this.stopped) return;
       log("info", { source: "coinbase", event: "reconnecting" });
       setTimeout(() => this.connectCoinbase(), 5000);
