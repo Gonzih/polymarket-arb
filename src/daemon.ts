@@ -13,10 +13,14 @@ import {
 import type { SimulationResult as DebateSimulationResult } from "./simulationSignal.js";
 import { RiskManager } from "./kelly.js";
 import { log } from "./logger.js";
+import { NewsPoller } from "./newsPoller.js";
+import { ReportCollector } from "./report.js";
 
 const CLAUDE_CONFIDENCE_THRESHOLD = 0.65;
 const INITIAL_BALANCE = 1000; // paper trading starts with $1000
 const SIGNAL_COOLDOWN_MS = 60_000; // don't re-fire same symbol within 1 min
+const NEWS_BOOST_WINDOW_MS = 120_000; // 2 minutes: boost signal if news within this window
+const NEWS_BOOST_MULTIPLIER = 1.5;
 const SIM_MIN_VOLUME = 50_000; // 24h volume threshold for simulation
 const SIM_MIN_ODDS = 0.15;     // skip simulation near certainty
 const SIM_MAX_ODDS = 0.85;
@@ -43,13 +47,21 @@ export class TradingDaemon {
   private debateScheduleTimer: NodeJS.Timeout | null = null;
   private activeMarkets: Map<string, { question: string; odds: number; volume: number; hoursToResolution: number }> = new Map();
 
+  // News + report
+  private newsPoller = new NewsPoller();
+  private reporter = new ReportCollector();
+
   constructor(paperMode = true) {
     this.paperMode = paperMode;
     log("info", { event: "daemon_start", paperMode, balance: INITIAL_BALANCE });
   }
 
   start(): void {
+    this.newsPoller.start();
+    this.reporter.start();
+
     this.feeds.onPrice(async (tick) => {
+      const signalAt = Date.now();
       const signal = this.signals.addTick(tick);
       if (!signal) return;
 
@@ -67,16 +79,39 @@ export class TradingDaemon {
 
       this.lastSignal.set(signal.symbol, Date.now());
 
+      // News confidence boost: check if any recent news event fired within 2 min
+      const recentNews = this.newsPoller.getRecentEvents(NEWS_BOOST_WINDOW_MS);
+      const newsBoost = recentNews.length > 0;
+      let signalConfidenceMultiplier = 1.0;
+      if (newsBoost) {
+        signalConfidenceMultiplier = NEWS_BOOST_MULTIPLIER;
+        const topNews = recentNews[recentNews.length - 1];
+        log("info", {
+          event: "news_boost",
+          headline: topNews.headline,
+          signalConfidenceMultiplier,
+        });
+      }
+
       log("info", {
         event: "signal_fired",
         symbol: signal.symbol,
         direction: signal.direction,
         momentum: (signal.momentum * 100).toFixed(3) + "%",
         price: signal.currentPrice,
+        newsBoost,
       });
 
-      // Find matching contracts
+      // Record signal for daily report
+      this.reporter.recordSignal(newsBoost);
+
+      // Find matching contracts — measure latency from signal detection to CLOB query
       const contracts = await fetchContracts(signal.symbol);
+      const oddsCheckedAt = Date.now();
+      const latencyMs = oddsCheckedAt - signalAt;
+      log("info", { event: "latency", "signal→odds check": `${latencyMs}ms`, latencyMs });
+      this.reporter.recordLatency(latencyMs);
+
       const matching = contracts.filter((c) => c.direction === signal.direction);
 
       if (matching.length === 0) {
@@ -201,11 +236,13 @@ export class TradingDaemon {
       });
       if (!analysis) return;
 
-      if (!analysis.enter || analysis.confidence < CLAUDE_CONFIDENCE_THRESHOLD) {
+      const boostedConfidence = Math.min(1.0, analysis.confidence * signalConfidenceMultiplier);
+      if (!analysis.enter || boostedConfidence < CLAUDE_CONFIDENCE_THRESHOLD) {
         log("info", {
           event: "trade_skipped",
           reason: "claude_confidence_below_threshold",
           confidence: analysis.confidence,
+          boostedConfidence,
           threshold: CLAUDE_CONFIDENCE_THRESHOLD,
           reasoning: analysis.reasoning,
         });
@@ -230,6 +267,8 @@ export class TradingDaemon {
         size,
         price,
         confidence: analysis.confidence,
+        boostedConfidence,
+        newsBoost,
         kellyFraction: adjustedKelly,
         reasoning: analysis.reasoning,
         expiresAt: new Date(contract.expiresAt).toISOString(),
@@ -252,6 +291,8 @@ export class TradingDaemon {
 
   stop(): void {
     this.feeds.stop();
+    this.newsPoller.stop();
+    this.reporter.stop();
     if (this.dayResetTimer) clearTimeout(this.dayResetTimer);
     if (this.debateScheduleTimer) clearTimeout(this.debateScheduleTimer);
     log("info", { event: "daemon_stopped" });
