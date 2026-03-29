@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import type { MomentumSignal } from "./signal.js";
 import type { Contract, WhaleFadeSignal } from "./polymarket.js";
+import type { SimulationResult } from "./simulationSignal.js";
 import { log } from "./logger.js";
 
 const execFileAsync = promisify(execFile);
@@ -17,6 +18,7 @@ export type ExtraContext = {
   whaleFade?: WhaleFadeSignal | null;
   simulationGap?: number | null;   // pp difference: positive = consensus > market odds
   highConfidenceEdge?: boolean;
+  simulation?: SimulationResult;
 };
 
 export async function analyzeTradeOpportunity(
@@ -43,6 +45,13 @@ export async function analyzeTradeOpportunity(
     }
     if (extra.highConfidenceEdge !== undefined) {
       extraContext += `\nHigh-confidence edge: ${extra.highConfidenceEdge ? "YES — whale fade and simulation both agree on direction" : "NO"}.`;
+    }
+    if (extra.simulation) {
+      const sim = extra.simulation;
+      const edgeSign = sim.edge > 0 ? "+" : "";
+      extraContext += `\n4-agent debate signal: ${sim.signal} | Synthetic P(YES)=${(sim.syntheticProb * 100).toFixed(1)}% | Edge=${edgeSign}${(sim.edge * 100).toFixed(1)}pp | Spread=${(sim.spread * 100).toFixed(1)}pp`;
+      const breakdown = sim.agents.map((a) => `${a.agent}=${(a.prob * 100).toFixed(0)}%`).join(", ");
+      extraContext += `\n  Agent breakdown: ${breakdown}`;
     }
   }
 
