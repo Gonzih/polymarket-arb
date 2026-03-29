@@ -4,6 +4,13 @@ import { fetchContracts, fetchRecentTrades, detectWhaleFade, placeOrder } from "
 import { analyzeTradeOpportunity } from "./claude.js";
 import { simulateMarket, computeHighConfidenceEdge } from "./simulate.js";
 import type { SimulationResult } from "./simulate.js";
+import {
+  runSimulation,
+  shouldRunSimulation,
+  kellyAdjustment,
+  logSimulationResult,
+} from "./simulationSignal.js";
+import type { SimulationResult as DebateSimulationResult } from "./simulationSignal.js";
 import { RiskManager } from "./kelly.js";
 import { log } from "./logger.js";
 
@@ -15,6 +22,12 @@ const SIM_MIN_ODDS = 0.15;     // skip simulation near certainty
 const SIM_MAX_ODDS = 0.85;
 const SIM_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // re-run sim at most every 2h per market
 
+// Debate simulation constants
+const DEBATE_WHALE_THRESHOLD = 100_000; // run debate simulation on whale trades >= $100k
+const DEBATE_ODDS_DELTA_THRESHOLD = 0.07; // 7% odds change triggers debate simulation
+const DEBATE_SCHEDULE_MIN_MS = 4 * 60 * 60 * 1000; // 4h minimum
+const DEBATE_SCHEDULE_MAX_MS = 6 * 60 * 60 * 1000; // 6h maximum
+
 export class TradingDaemon {
   private feeds = new FeedManager();
   private signals = new SignalEngine();
@@ -23,6 +36,12 @@ export class TradingDaemon {
   private lastSignal: Map<string, number> = new Map();
   private dayResetTimer: NodeJS.Timeout | null = null;
   private simCache: Map<string, { lastRunAt: number; result: SimulationResult }> = new Map();
+
+  // Debate simulation state
+  private lastDebateSimAt: Map<string, number> = new Map();
+  private lastMarketOdds: Map<string, number> = new Map();
+  private debateScheduleTimer: NodeJS.Timeout | null = null;
+  private activeMarkets: Map<string, { question: string; odds: number; volume: number; hoursToResolution: number }> = new Map();
 
   constructor(paperMode = true) {
     this.paperMode = paperMode;
@@ -108,11 +127,77 @@ export class TradingDaemon {
         });
       }
 
+      // Track this market for scheduled debate simulations
+      const hoursToResolution = Math.max(0, (contract.expiresAt - Date.now()) / 3_600_000);
+      this.activeMarkets.set(contract.id, {
+        question: contract.question,
+        odds,
+        volume: 0, // volume not available in Contract type; will be checked against threshold
+        hoursToResolution,
+      });
+
+      // Check for odds delta trigger (>7% change since last observed)
+      const lastOdds = this.lastMarketOdds.get(contract.id);
+      const oddsDelta = lastOdds !== undefined ? Math.abs(odds - lastOdds) : 0;
+      this.lastMarketOdds.set(contract.id, odds);
+
+      // Run debate simulation on whale trade or odds delta
+      let debateResult: DebateSimulationResult | null = null;
+      if (whaleFade && whaleFade.size >= DEBATE_WHALE_THRESHOLD) {
+        log("info", {
+          event: "debate_sim_trigger",
+          reason: "whale_trade",
+          marketId: contract.id,
+          whaleSize: whaleFade.size,
+        });
+        debateResult = await runSimulation({
+          type: 'whale',
+          marketId: contract.id,
+          marketQuestion: contract.question,
+          marketOdds: odds,
+          volume: whaleFade.size,
+          hoursToResolution,
+        }).catch(() => null);
+        if (debateResult) logSimulationResult(debateResult, contract.question);
+      } else if (oddsDelta >= DEBATE_ODDS_DELTA_THRESHOLD) {
+        log("info", {
+          event: "debate_sim_trigger",
+          reason: "odds_delta",
+          marketId: contract.id,
+          oddsDelta: parseFloat((oddsDelta * 100).toFixed(2)),
+        });
+        debateResult = await runSimulation({
+          type: 'odds_delta',
+          marketId: contract.id,
+          marketQuestion: contract.question,
+          marketOdds: odds,
+          volume: 0,
+          hoursToResolution,
+        }).catch(() => null);
+        if (debateResult) logSimulationResult(debateResult, contract.question);
+      }
+
+      // Apply Kelly adjustment from debate result
+      let kellyMultiplier = 1.0;
+      if (debateResult) {
+        kellyMultiplier = kellyAdjustment(debateResult);
+        if (kellyMultiplier === 0.0) {
+          log("info", {
+            event: "trade_skipped",
+            reason: "debate_volatility_signal",
+            marketId: contract.id,
+            spread: debateResult.spread,
+          });
+          return;
+        }
+      }
+
       // Ask Claude for analysis (with extra context)
       const analysis = await analyzeTradeOpportunity(signal, contract, {
         whaleFade,
         simulationGap,
         highConfidenceEdge,
+        simulation: debateResult ?? undefined,
       });
       if (!analysis) return;
 
@@ -127,9 +212,10 @@ export class TradingDaemon {
         return;
       }
 
-      // Size the position
+      // Size the position (apply debate Kelly multiplier)
       const price = contract.yesPrice;
-      const size = this.risk.sizePosition(analysis.kelly_fraction, price);
+      const adjustedKelly = analysis.kelly_fraction * kellyMultiplier;
+      const size = this.risk.sizePosition(adjustedKelly, price);
 
       if (size <= 0) {
         log("info", { event: "trade_skipped", reason: "zero_size" });
@@ -144,7 +230,7 @@ export class TradingDaemon {
         size,
         price,
         confidence: analysis.confidence,
-        kellyFraction: analysis.kelly_fraction,
+        kellyFraction: adjustedKelly,
         reasoning: analysis.reasoning,
         expiresAt: new Date(contract.expiresAt).toISOString(),
         paperMode: this.paperMode,
@@ -158,13 +244,48 @@ export class TradingDaemon {
     // Reset daily P&L at midnight
     this.scheduleDayReset();
 
+    // Schedule periodic debate simulations (every 4-6h)
+    this.scheduleDebateSimulation();
+
     log("info", { event: "feeds_started" });
   }
 
   stop(): void {
     this.feeds.stop();
     if (this.dayResetTimer) clearTimeout(this.dayResetTimer);
+    if (this.debateScheduleTimer) clearTimeout(this.debateScheduleTimer);
     log("info", { event: "daemon_stopped" });
+  }
+
+  private scheduleDebateSimulation(): void {
+    const jitter = DEBATE_SCHEDULE_MIN_MS +
+      Math.random() * (DEBATE_SCHEDULE_MAX_MS - DEBATE_SCHEDULE_MIN_MS);
+
+    this.debateScheduleTimer = setTimeout(async () => {
+      log("info", { event: "debate_sim_scheduled_run", marketCount: this.activeMarkets.size });
+
+      for (const [marketId, market] of this.activeMarkets.entries()) {
+        if (!shouldRunSimulation(market.volume, market.hoursToResolution)) continue;
+
+        const lastRun = this.lastDebateSimAt.get(marketId) ?? 0;
+        if (Date.now() - lastRun < DEBATE_SCHEDULE_MIN_MS) continue;
+
+        this.lastDebateSimAt.set(marketId, Date.now());
+        const result = await runSimulation({
+          type: 'scheduled',
+          marketId,
+          marketQuestion: market.question,
+          marketOdds: market.odds,
+          volume: market.volume,
+          hoursToResolution: market.hoursToResolution,
+        }).catch(() => null);
+
+        if (result) logSimulationResult(result, market.question);
+      }
+
+      // Reschedule
+      this.scheduleDebateSimulation();
+    }, jitter);
   }
 
   private scheduleDayReset(): void {
