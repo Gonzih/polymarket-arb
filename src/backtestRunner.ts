@@ -1,6 +1,7 @@
 import {
   fetchResolvedMarkets,
   fetchPriceHistory,
+  fetchActiveMarkets,
   replaySignals,
   askClaude,
   kellySize,
@@ -13,6 +14,13 @@ import {
   type BacktestReport,
 } from "./backtest.js";
 import { log } from "./logger.js";
+
+type ActiveProbeEntry = {
+  question: string;
+  oddsAtSignal: number;
+  decision: string;
+  latencyMs: number;
+};
 
 const MARKETS_TO_FETCH = 50;
 // At most one Claude call per market to keep runtime reasonable
@@ -120,6 +128,41 @@ export async function runBacktest(): Promise<void> {
       `${marketsNoSignal} had history but no signal fired`
   );
 
+  // ── Active markets probe ──────────────────────────────────────────────────
+  let activeProbeResults: ActiveProbeEntry[] = [];
+  if (marketsWithHistory === 0) {
+    console.log("\nFetching active markets for live signal probe...");
+    const activeMarkets = await fetchActiveMarkets(20);
+    let activeWithHistory = 0;
+    let activeSignalsFound = 0;
+
+    for (const market of activeMarkets) {
+      const tokenId = market.clobTokenId || market.conditionId;
+      const history = await fetchPriceHistory(tokenId);
+      if (history.length < 5) continue;
+      activeWithHistory++;
+
+      const signals = replaySignals(history);
+      if (signals.length === 0) continue;
+      activeSignalsFound++;
+
+      const signal = signals[0];
+      const { decision, latencyMs } = await askClaude(market.question, signal.oddsAtSignal);
+      activeProbeResults.push({
+        question: market.question,
+        oddsAtSignal: signal.oddsAtSignal,
+        decision,
+        latencyMs,
+      });
+    }
+
+    console.log(
+      `Active market probe: ${activeMarkets.length} markets, ` +
+        `${activeWithHistory} had price history, ` +
+        `${activeSignalsFound} signals found`
+    );
+  }
+
   // ── Claude integration probe ──────────────────────────────────────────────
   // Always run this to verify the subprocess works, regardless of signals.
   console.log("\nRunning Claude integration probe (5 markets)...");
@@ -133,7 +176,7 @@ export async function runBacktest(): Promise<void> {
   const reportResults = results.length > 0 ? results : probe.sample;
 
   const report = generateReport(reportResults, markets.length);
-  const reportText = buildFullReport(report, probe, marketsNoHistory, markets.length, date);
+  const reportText = buildFullReport(report, probe, marketsNoHistory, markets.length, date, activeProbeResults);
   console.log("\n" + reportText);
 
   const reportPath = writeReport(reportText, date);
@@ -152,7 +195,8 @@ function buildFullReport(
   probe: { success: number; errors: number; avgLatencyMs: number; sample: BacktestResult[] },
   marketsNoHistory: number,
   marketsTotal: number,
-  date: string
+  date: string,
+  activeProbeResults: ActiveProbeEntry[] = []
 ): string {
   let text = formatBaseReport(report, date);
 
@@ -178,6 +222,15 @@ function buildFullReport(
     text +=
       `  ${icon} "${r.question.slice(0, 50)}" → ${r.claudeDecision} ` +
       `(${(r.claudeLatencyMs / 1000).toFixed(1)}s, resolved: ${r.actualResolution === 1 ? "YES" : "NO"})\n`;
+  }
+
+  if (activeProbeResults.length > 0) {
+    text += "\n\nACTIVE MARKET PROBE RESULTS:\n";
+    for (const r of activeProbeResults) {
+      text +=
+        `  "${r.question.slice(0, 50)}" → ${r.decision} ` +
+        `(odds: ${(r.oddsAtSignal * 100).toFixed(1)}%, ${(r.latencyMs / 1000).toFixed(1)}s)\n`;
+    }
   }
 
   return text;

@@ -49,6 +49,21 @@ export type BacktestResult = {
   hypotheticalPnl: number; // fraction of bankroll
 };
 
+type RawTradeEntry = {
+  price: string | number;
+  timestamp: string | number;
+};
+
+export type ActiveMarket = {
+  id: string;
+  conditionId: string;
+  clobTokenId: string;
+  question: string;
+  volume: number;
+  endDate: number;      // unix ms
+  yesPrice: number;     // current YES odds (0-1)
+};
+
 function parseJsonField(field: string | string[]): string[] {
   if (Array.isArray(field)) return field;
   try {
@@ -143,23 +158,122 @@ export async function fetchResolvedMarkets(limit = 100): Promise<ResolvedMarket[
 }
 
 /**
- * Fetches hourly price history from the CLOB API.
- * NOTE (discovered during backtest): The CLOB prices-history endpoint returns
- * empty data for resolved/closed markets. Price history is only available for
- * currently active markets, and typically has very few data points.
- * marketId should be a clobTokenId (the long numeric string from clobTokenIds[0]).
+ * Reconstructs hourly price series from CLOB trades endpoint.
+ * Groups trades into hourly buckets and takes the last price in each bucket.
  */
-export async function fetchPriceHistory(marketId: string): Promise<PricePoint[]> {
+export async function fetchPriceHistoryFromTrades(marketId: string): Promise<PricePoint[]> {
   try {
-    const url = `${CLOB_API}/prices-history?market=${encodeURIComponent(marketId)}&interval=1h&fidelity=60`;
+    const url = `${CLOB_API}/trades?market=${encodeURIComponent(marketId)}&limit=500`;
     const res = await fetch(url);
     if (!res.ok) return [];
-    const data = (await res.json()) as { history?: PricePoint[] } | PricePoint[];
-    const history = Array.isArray(data) ? data : (data.history ?? []);
-    return (history as PricePoint[]).sort((a, b) => a.t - b.t);
+    const raw = (await res.json()) as RawTradeEntry[] | { data: RawTradeEntry[] };
+    const trades = Array.isArray(raw) ? raw : (raw.data ?? []);
+
+    const buckets = new Map<number, number>();
+    for (const trade of trades) {
+      const ts = Number(trade.timestamp);
+      const tsSec = ts < 1e12 ? ts : Math.floor(ts / 1000);
+      const bucket = Math.floor(tsSec / 3600) * 3600;
+      buckets.set(bucket, Number(trade.price));
+    }
+
+    return Array.from(buckets.entries())
+      .map(([t, p]) => ({ t, p }))
+      .sort((a, b) => a.t - b.t);
   } catch {
     return [];
   }
+}
+
+/**
+ * Fetches hourly price history from the CLOB API.
+ * NOTE (discovered during backtest): The CLOB prices-history endpoint returns
+ * empty data for resolved/closed markets. Falls back to trades reconstruction
+ * when the primary source returns fewer than 5 points.
+ * marketId should be a clobTokenId (the long numeric string from clobTokenIds[0]).
+ */
+export async function fetchPriceHistory(marketId: string): Promise<PricePoint[]> {
+  let primaryHistory: PricePoint[] = [];
+  let primaryNetworkError = false;
+  try {
+    const url = `${CLOB_API}/prices-history?market=${encodeURIComponent(marketId)}&interval=1h&fidelity=60`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      primaryNetworkError = true;
+    } else {
+      const data = (await res.json()) as { history?: PricePoint[] } | PricePoint[];
+      const history = Array.isArray(data) ? data : (data.history ?? []);
+      primaryHistory = (history as PricePoint[]).sort((a, b) => a.t - b.t);
+    }
+  } catch {
+    primaryNetworkError = true;
+  }
+
+  if (primaryHistory.length < 5 || primaryNetworkError) {
+    const fallback = await fetchPriceHistoryFromTrades(marketId);
+    return fallback.length >= primaryHistory.length ? fallback : primaryHistory;
+  }
+
+  return primaryHistory;
+}
+
+export async function fetchActiveMarkets(limit = 50): Promise<ActiveMarket[]> {
+  const results: ActiveMarket[] = [];
+  let offset = 0;
+  const batchSize = 100;
+
+  while (results.length < limit) {
+    const url = `${GAMMA_API}/markets?closed=false&active=true&limit=${batchSize}&offset=${offset}`;
+    let markets: RawMarket[];
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        log("warn", { source: "backtest", event: "fetch_active_error", status: res.status });
+        break;
+      }
+      markets = (await res.json()) as RawMarket[];
+    } catch (err) {
+      log("warn", { source: "backtest", event: "fetch_active_exception", error: String(err) });
+      break;
+    }
+
+    if (markets.length === 0) break;
+
+    for (const m of markets) {
+      const volume = Number(m.volumeNum ?? m.volume ?? 0);
+      if (volume < 50_000) continue;
+
+      const endDate = m.endDate ? new Date(m.endDate).getTime() : 0;
+      if (endDate === 0) continue;
+
+      const prices = parseJsonField(m.outcomePrices ?? []).map(Number);
+      if (prices.length < 2) continue;
+
+      const yesPrice = prices[0];
+      if (yesPrice < 0.05 || yesPrice > 0.95) continue;
+
+      const tokenIds = parseJsonField(m.clobTokenIds ?? "[]");
+      const clobTokenId = tokenIds[0] ?? "";
+
+      results.push({
+        id: m.id,
+        conditionId: m.conditionId ?? m.id,
+        clobTokenId,
+        question: m.question ?? "",
+        volume,
+        endDate,
+        yesPrice,
+      });
+
+      if (results.length >= limit) break;
+    }
+
+    offset += batchSize;
+    if (markets.length < batchSize) break;
+  }
+
+  log("info", { source: "backtest", event: "active_markets_fetched", count: results.length });
+  return results;
 }
 
 /**

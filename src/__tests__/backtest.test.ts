@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   fetchResolvedMarkets,
   fetchPriceHistory,
+  fetchPriceHistoryFromTrades,
+  fetchActiveMarkets,
   replaySignals,
   kellySize,
   computePnl,
@@ -472,5 +474,148 @@ describe("formatReport", () => {
   it("includes the date in the report", () => {
     const text = formatReport(base, "2026-03-28");
     expect(text).toContain("Date: 2026-03-28");
+  });
+});
+
+// ── fetchPriceHistoryFromTrades ───────────────────────────────────────────────
+
+describe("fetchPriceHistoryFromTrades", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reconstructs hourly buckets from trade array, last price wins", async () => {
+    // Both timestamps fall in the same hour bucket (floor(ts/3600)*3600 = 1700000000 for these)
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { price: "0.60", timestamp: "1700001800" }, // hour bucket 1700000000
+        { price: "0.62", timestamp: "1700002400" }, // same hour bucket, last price wins
+      ],
+    }));
+
+    const history = await fetchPriceHistoryFromTrades("token1");
+    expect(history.length).toBe(1);
+    expect(history[0].p).toBeCloseTo(0.62);
+  });
+
+  it("handles {data: [...]} wrapper shape", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ price: "0.70", timestamp: "1700000100" }] }),
+    }));
+
+    const history = await fetchPriceHistoryFromTrades("token1");
+    expect(history.length).toBe(1);
+    expect(history[0].p).toBeCloseTo(0.70);
+  });
+
+  it("returns empty array on HTTP error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+    const history = await fetchPriceHistoryFromTrades("token1");
+    expect(history).toEqual([]);
+  });
+
+  it("returns empty array on network error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Network error")));
+    const history = await fetchPriceHistoryFromTrades("token1");
+    expect(history).toEqual([]);
+  });
+
+  it("handles millisecond timestamps (ts >= 1e12 converted to seconds)", async () => {
+    // 1700000000000 ms → 1700000000 s → bucket 1699999200 (floor(1700000000/3600)*3600)
+    // 1700000000 s → same bucket
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { price: "0.55", timestamp: "1700000000000" }, // ms timestamp
+        { price: "0.57", timestamp: "1700000000" },    // same bucket, seconds timestamp
+      ],
+    }));
+
+    const history = await fetchPriceHistoryFromTrades("token1");
+    // Both map to the same hour bucket
+    expect(history.length).toBe(1);
+    expect(history[0].p).toBeCloseTo(0.57);
+  });
+
+  it("returns result sorted ascending by t", async () => {
+    // Trades in reverse chronological order (newer first)
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { price: "0.80", timestamp: "1700010000" }, // later hour bucket
+        { price: "0.70", timestamp: "1700003600" }, // earlier hour bucket
+        { price: "0.60", timestamp: "1700000000" }, // earliest hour bucket
+      ],
+    }));
+
+    const history = await fetchPriceHistoryFromTrades("token1");
+    expect(history.length).toBe(3);
+    expect(history[0].t).toBeLessThan(history[1].t);
+    expect(history[1].t).toBeLessThan(history[2].t);
+  });
+});
+
+// ── fetchActiveMarkets ────────────────────────────────────────────────────────
+
+describe("fetchActiveMarkets", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function makeActiveMarket(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "active1",
+      conditionId: "cond_active1",
+      question: "Will ETH exceed $5k by Q2?",
+      volume: "100000",
+      endDate: "2026-06-01T00:00:00Z",
+      closed: false,
+      resolved: false,
+      outcomePrices: '["0.6","0.4"]',
+      clobTokenIds: '["tok1","tok2"]',
+      ...overrides,
+    };
+  }
+
+  it("returns active markets filtered by volume and yesPrice range", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [
+            makeActiveMarket({ id: "a1", volume: "100000", outcomePrices: '["0.6","0.4"]' }), // valid
+            makeActiveMarket({ id: "a2", volume: "100000", outcomePrices: '["0.02","0.98"]' }), // yesPrice too low
+            makeActiveMarket({ id: "a3", volume: "100000", outcomePrices: '["0.97","0.03"]' }), // yesPrice too high
+            makeActiveMarket({ id: "a4", volume: "10000", outcomePrices: '["0.5","0.5"]' }),   // volume too low
+          ],
+        })
+        .mockResolvedValueOnce({ ok: true, json: async () => [] })
+    );
+
+    const markets = await fetchActiveMarkets(10);
+    expect(markets.length).toBe(1);
+    expect(markets[0].id).toBe("a1");
+    expect(markets[0].yesPrice).toBeCloseTo(0.6);
+  });
+
+  it("returns empty array on HTTP error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    const markets = await fetchActiveMarkets(10);
+    expect(markets).toEqual([]);
+  });
+
+  it("stops pagination when fewer than batchSize markets are returned", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          // Return only 1 item (less than batchSize=100) — should stop after this page
+          json: async () => [makeActiveMarket({ id: "a1" })],
+        })
+    );
+
+    const markets = await fetchActiveMarkets(50);
+    // Only one fetch call should have been made
+    expect(markets.length).toBe(1);
   });
 });
