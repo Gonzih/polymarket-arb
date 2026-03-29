@@ -4,7 +4,7 @@ Date: 2026-03-29
 Markets analyzed: 50
 Signals fired: 5 (10.0% of markets)
 Claude Code: 5/5 decisions returned (0 errors)
-Claude latency: avg 5.1s, max 6.0s
+Claude latency: avg 5.6s, max 6.6s
 
 SIGNAL ACCURACY:
   BUY_YES decisions: 0 → correct: 0/0 (n/a)
@@ -31,10 +31,10 @@ Investigation results:
 
 CLAUDE INTEGRATION PROBE (5 markets, no momentum signal required):
   5/5 calls succeeded (0 errors)
-  Avg latency: 5.1s
-  ✓ "Greens win over 15% of vote in German election? " → PASS (5.0s, resolved: NO)
-  ✓ "Will Microstrategy vote to increase common stock s" → PASS (5.8s, resolved: YES)
-  ✓ "Fed rate hike in 2025?" → PASS (4.4s, resolved: NO)
-  ✓ "Circle IPO in 2025?" → PASS (4.5s, resolved: YES)
-  ✓ "US recession in 2025?" → PASS (6.0s, resolved: NO)
+  Avg latency: 5.6s
+  ✓ "Greens win over 15% of vote in German election? " → PASS (6.6s, resolved: NO)
+  ✓ "Will Microstrategy vote to increase common stock s" → PASS (4.4s, resolved: YES)
+  ✓ "Fed rate hike in 2025?" → PASS (5.9s, resolved: NO)
+  ✓ "Circle IPO in 2025?" → PASS (5.4s, resolved: YES)
+  ✓ "US recession in 2025?" → PASS (5.9s, resolved: NO)
 

@@ -1,0 +1,71 @@
+{
+  "date": "2026-03-29",
+  "runTimestamp": "2026-03-29T07:27:33Z",
+  "marketsAnalyzed": 50,
+  "marketsWithPriceHistory": 0,
+  "marketsNoHistory": 50,
+  "marketsNoSignal": 0,
+  "fallbackToTradesReconstruction": 0,
+  "signalsFired": 5,
+  "claudeIntegration": {
+    "success": 5,
+    "errors": 0,
+    "avgLatencyMs": 5619,
+    "maxLatencyMs": 6572,
+    "allDecisions": "PASS"
+  },
+  "signalAccuracy": {
+    "buyYesTotal": 0,
+    "buyYesCorrect": 0,
+    "buyNoTotal": 0,
+    "buyNoCorrect": 0,
+    "passCount": 5,
+    "winRatePct": 0,
+    "avgKellyPct": 0,
+    "totalPnlFraction": 0
+  },
+  "verdict": "INSUFFICIENT DATA",
+  "apiFindings": {
+    "pricesHistoryEndpoint": "returns {history:[]} for all resolved/closed markets",
+    "tradesEndpoint": "0 resolved markets returned usable price series (< 5 points)",
+    "activeMarkets": "0/20 active markets had price history >= 5 points",
+    "recommendation": "Use Dune Analytics or TheGraph for historical price data"
+  },
+  "sampleClaudeDecisions": [
+    {
+      "question": "Greens win over 15% of vote in German election?",
+      "oddsAtSignal": 0.5,
+      "decision": "PASS",
+      "latencyMs": 6572,
+      "actualResolution": 0
+    },
+    {
+      "question": "Will Microstrategy vote to increase common stock supply pass?",
+      "oddsAtSignal": 0.5,
+      "decision": "PASS",
+      "latencyMs": 4422,
+      "actualResolution": 1
+    },
+    {
+      "question": "Fed rate hike in 2025?",
+      "oddsAtSignal": 0.5,
+      "decision": "PASS",
+      "latencyMs": 5871,
+      "actualResolution": 0
+    },
+    {
+      "question": "Circle IPO in 2025?",
+      "oddsAtSignal": 0.5,
+      "decision": "PASS",
+      "latencyMs": 5351,
+      "actualResolution": 1
+    },
+    {
+      "question": "US recession in 2025?",
+      "oddsAtSignal": 0.5,
+      "decision": "PASS",
+      "latencyMs": 5880,
+      "actualResolution": 0
+    }
+  ]
+}
