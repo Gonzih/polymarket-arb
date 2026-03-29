@@ -18,6 +18,77 @@ export type OrderResult = {
   status: string;
 };
 
+export type TradeEvent = {
+  size: number;      // USDC notional
+  side: 'buy' | 'sell';
+  price: number;
+  timestamp: number; // unix ms
+};
+
+export type WhaleFadeSignal = {
+  direction: 'buy' | 'sell'; // fade direction (opposite of whale)
+  size: number;
+  minutesAgo: number;
+};
+
+type RawTrade = {
+  size: string | number;
+  side: string;
+  price: string | number;
+  timestamp: string | number;
+};
+
+export async function fetchRecentTrades(
+  marketId: string,
+  opts: { limit: number } = { limit: 20 }
+): Promise<TradeEvent[]> {
+  try {
+    const url = `${CLOB_API}/trades?market=${encodeURIComponent(marketId)}&limit=${opts.limit}`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const raw = (await res.json()) as RawTrade[] | { data: RawTrade[] };
+    const trades = Array.isArray(raw) ? raw : (raw.data ?? []);
+    return trades.map((t) => {
+      const ts = Number(t.timestamp);
+      return {
+        size: Number(t.size),
+        side: String(t.side).toUpperCase() === "BUY" ? "buy" : "sell",
+        price: Number(t.price),
+        // CLOB timestamps are Unix seconds; convert to ms if needed
+        timestamp: ts < 1e12 ? ts * 1000 : ts,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function detectWhaleFade(trades: TradeEvent[]): WhaleFadeSignal | null {
+  const whaleTrades = trades.filter((t) => t.size > 10_000);
+  if (whaleTrades.length === 0) return null;
+
+  const lastWhale = whaleTrades[0];
+  const timeSince = Date.now() - lastWhale.timestamp;
+  if (timeSince >= 30 * 60 * 1000) return null;
+
+  const signal: WhaleFadeSignal = {
+    direction: lastWhale.side === "buy" ? "sell" : "buy",
+    size: lastWhale.size,
+    minutesAgo: Math.round(timeSince / 60_000),
+  };
+
+  log("info", {
+    source: "polymarket",
+    event: "whale_fade_signal",
+    whaleSize: lastWhale.size,
+    whaleSide: lastWhale.side,
+    fadeDirection: signal.direction,
+    minutesAgo: signal.minutesAgo,
+  });
+
+  return signal;
+}
+
 type RestMarket = {
   id: string;
   question: string;
