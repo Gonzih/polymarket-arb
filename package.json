@@ -1,6 +1,6 @@
 {
   "name": "@gonzih/polymarket-arb",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Claude-powered Polymarket arbitrage bot — BTC/ETH momentum signal + AI trade analysis",
   "keywords": [
     "polymarket",
