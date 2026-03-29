@@ -1,15 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'node:events';
 import type { WhaleFadeSignal } from '../polymarket.js';
 
-// ── Mock child_process + logger ──────────────────────────────────────────────
+// ── Mock child_process + logger ───────────────────────────────────────────────
+//
+// simulate.ts uses spawn('claude', ...) and writes prompts to stdin.
+// We mock spawn to return fake processes that emit stdout and exit events.
 
-const mockExecFile = vi.hoisted(() => vi.fn());
+const mockSpawn = vi.hoisted(() => vi.fn());
 
-vi.mock('child_process', () => {
-  const execFileMock = vi.fn();
-  (execFileMock as any)[Symbol.for('nodejs.util.promisify.custom')] = mockExecFile;
-  return { execFile: execFileMock };
-});
+vi.mock('child_process', () => ({
+  spawn: mockSpawn,
+}));
 
 vi.mock('../logger.js', () => ({ log: vi.fn() }));
 
@@ -17,14 +19,32 @@ import { simulateMarket, median, computeHighConfidenceEdge } from '../simulate.j
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function personaResponse(probability: number, reasoning = 'test reason'): { stdout: string; stderr: string } {
-  return {
-    stdout: JSON.stringify({ probability, reasoning }),
-    stderr: '',
+function makeProc(stdoutData: string, exitCode = 0, throwError?: Error) {
+  const proc = new EventEmitter() as any;
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  proc.kill = vi.fn();
+  proc.stdin = {
+    write: vi.fn(),
+    end: vi.fn().mockImplementation(() => {
+      setImmediate(() => {
+        if (throwError) {
+          proc.emit('error', throwError);
+        } else {
+          if (stdoutData) proc.stdout.emit('data', Buffer.from(stdoutData));
+          proc.emit('exit', exitCode);
+        }
+      });
+    }),
   };
+  return proc;
 }
 
-// ── median() ─────────────────────────────────────────────────────────────────
+function personaProc(probability: number, reasoning = 'test reason') {
+  return makeProc(JSON.stringify({ probability, reasoning }));
+}
+
+// ── median() ──────────────────────────────────────────────────────────────────
 
 describe('median', () => {
   it('returns 0.5 for empty array', () => {
@@ -52,7 +72,7 @@ describe('median', () => {
   });
 });
 
-// ── simulateMarket() ─────────────────────────────────────────────────────────
+// ── simulateMarket() ──────────────────────────────────────────────────────────
 
 describe('simulateMarket', () => {
   beforeEach(() => {
@@ -61,12 +81,12 @@ describe('simulateMarket', () => {
 
   it('returns consensus as median of 5 persona estimates', async () => {
     // Persona estimates: 30, 40, 50, 60, 70 → median = 50
-    mockExecFile
-      .mockResolvedValueOnce(personaResponse(30))
-      .mockResolvedValueOnce(personaResponse(40))
-      .mockResolvedValueOnce(personaResponse(50))
-      .mockResolvedValueOnce(personaResponse(60))
-      .mockResolvedValueOnce(personaResponse(70));
+    mockSpawn
+      .mockReturnValueOnce(personaProc(30))
+      .mockReturnValueOnce(personaProc(40))
+      .mockReturnValueOnce(personaProc(50))
+      .mockReturnValueOnce(personaProc(60))
+      .mockReturnValueOnce(personaProc(70));
 
     const result = await simulateMarket('Will BTC exceed $60k?', 0.5);
     expect(result.consensus).toBeCloseTo(0.5);
@@ -75,19 +95,19 @@ describe('simulateMarket', () => {
 
   it('calculates spread as max minus min of estimates', async () => {
     // estimates: 20, 40, 60, 80, 100 → spread = 0.8
-    mockExecFile
-      .mockResolvedValueOnce(personaResponse(20))
-      .mockResolvedValueOnce(personaResponse(40))
-      .mockResolvedValueOnce(personaResponse(60))
-      .mockResolvedValueOnce(personaResponse(80))
-      .mockResolvedValueOnce(personaResponse(100));
+    mockSpawn
+      .mockReturnValueOnce(personaProc(20))
+      .mockReturnValueOnce(personaProc(40))
+      .mockReturnValueOnce(personaProc(60))
+      .mockReturnValueOnce(personaProc(80))
+      .mockReturnValueOnce(personaProc(100));
 
     const result = await simulateMarket('Will ETH exceed $3k?', 0.5);
     expect(result.spread).toBeCloseTo(0.8);
   });
 
   it('includes persona names in result', async () => {
-    mockExecFile.mockResolvedValue(personaResponse(50));
+    mockSpawn.mockReturnValue(personaProc(50));
 
     const result = await simulateMarket('Will BTC be higher?', 0.5);
     const names = result.personas.map((p) => p.name);
@@ -98,14 +118,14 @@ describe('simulateMarket', () => {
     expect(names).toContain('journalist');
   });
 
-  it('filters out personas that fail (null results)', async () => {
+  it('filters out personas that fail (error results)', async () => {
     // 2 succeed, 3 fail
-    mockExecFile
-      .mockResolvedValueOnce(personaResponse(40))
-      .mockRejectedValueOnce(new Error('timeout'))
-      .mockResolvedValueOnce(personaResponse(60))
-      .mockRejectedValueOnce(new Error('timeout'))
-      .mockRejectedValueOnce(new Error('timeout'));
+    mockSpawn
+      .mockReturnValueOnce(personaProc(40))
+      .mockReturnValueOnce(makeProc('', 0, new Error('timeout')))
+      .mockReturnValueOnce(personaProc(60))
+      .mockReturnValueOnce(makeProc('', 0, new Error('timeout')))
+      .mockReturnValueOnce(makeProc('', 0, new Error('timeout')));
 
     const result = await simulateMarket('Will BTC drop?', 0.5);
     expect(result.personas).toHaveLength(2);
@@ -113,12 +133,12 @@ describe('simulateMarket', () => {
   });
 
   it('clamps probability estimates to 0-100 range', async () => {
-    mockExecFile
-      .mockResolvedValueOnce(personaResponse(-10))   // should clamp to 0
-      .mockResolvedValueOnce(personaResponse(150))   // should clamp to 100
-      .mockResolvedValueOnce(personaResponse(50))
-      .mockResolvedValueOnce(personaResponse(50))
-      .mockResolvedValueOnce(personaResponse(50));
+    mockSpawn
+      .mockReturnValueOnce(personaProc(-10))   // should clamp to 0
+      .mockReturnValueOnce(personaProc(150))   // should clamp to 100
+      .mockReturnValueOnce(personaProc(50))
+      .mockReturnValueOnce(personaProc(50))
+      .mockReturnValueOnce(personaProc(50));
 
     const result = await simulateMarket('Test?', 0.5);
     const estimates = result.personas.map((p) => p.estimate);
@@ -127,9 +147,9 @@ describe('simulateMarket', () => {
   });
 
   it('returns spread of 0 when only one persona responds', async () => {
-    mockExecFile
-      .mockResolvedValueOnce(personaResponse(60))
-      .mockRejectedValue(new Error('fail'));
+    mockSpawn
+      .mockReturnValueOnce(personaProc(60))
+      .mockReturnValue(makeProc('', 0, new Error('fail')));
 
     const result = await simulateMarket('Test?', 0.5);
     expect(result.spread).toBe(0);
@@ -137,7 +157,7 @@ describe('simulateMarket', () => {
   });
 
   it('returns null-safe result when all personas fail', async () => {
-    mockExecFile.mockRejectedValue(new Error('all fail'));
+    mockSpawn.mockReturnValue(makeProc('', 0, new Error('all fail')));
 
     const result = await simulateMarket('Test?', 0.5);
     expect(result.personas).toHaveLength(0);

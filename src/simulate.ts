@@ -1,9 +1,31 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { spawn } from "child_process";
 import { log } from "./logger.js";
 import type { WhaleFadeSignal } from "./polymarket.js";
 
-const execFileAsync = promisify(execFile);
+function askClaude(prompt: string, model: string, timeoutMs = 15000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("claude", ["--print", "--model", model], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env },
+    });
+
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    proc.on("error", reject);
+    proc.on("exit", (code) => {
+      if (code === 0) resolve(stdout.trim());
+      else reject(new Error(`claude exited ${code}: ${stderr.slice(0, 200)}`));
+    });
+
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+
+    const t = setTimeout(() => { proc.kill(); reject(new Error("claude timeout")); }, timeoutMs);
+    proc.on("exit", () => clearTimeout(t));
+  });
+}
 
 const PERSONAS = [
   { name: "skeptic", prior: "You are deeply skeptical. Challenge assumptions, look for what could go wrong." },
@@ -40,21 +62,7 @@ Respond with JSON only, no markdown:
 {"probability": <0-100>, "reasoning": "<one sentence>"}`;
 
   try {
-    const { stdout } = await execFileAsync(
-      "claude",
-      ["--print", "--model", "claude-haiku-4-5-20251001", prompt],
-      {
-        timeout: 15000,
-        env: {
-          ...process.env,
-          CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "",
-          ANTHROPIC_AUTH_TOKEN:
-            process.env.ANTHROPIC_AUTH_TOKEN ??
-            process.env.CLAUDE_CODE_OAUTH_TOKEN ??
-            "",
-        },
-      }
-    );
+    const stdout = await askClaude(prompt, "claude-haiku-4-5-20251001", 15000);
 
     const jsonMatch = stdout.match(/\{[\s\S]*?\}/);
     if (!jsonMatch) return null;
