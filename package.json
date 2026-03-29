@@ -31,7 +31,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "backtest": "tsx src/backtestRunner.ts"
   },
   "engines": {
     "node": ">=18.0.0"
