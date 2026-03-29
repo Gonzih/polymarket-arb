@@ -1,11 +1,33 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { spawn } from "child_process";
 import type { MomentumSignal } from "./signal.js";
 import type { Contract, WhaleFadeSignal } from "./polymarket.js";
 import type { SimulationResult } from "./simulationSignal.js";
 import { log } from "./logger.js";
 
-const execFileAsync = promisify(execFile);
+function askClaude(prompt: string, model: string, timeoutMs = 15000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("claude", ["--print", "--model", model], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env },
+    });
+
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    proc.on("error", reject);
+    proc.on("exit", (code) => {
+      if (code === 0) resolve(stdout.trim());
+      else reject(new Error(`claude exited ${code}: ${stderr.slice(0, 200)}`));
+    });
+
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+
+    const t = setTimeout(() => { proc.kill(); reject(new Error("claude timeout")); }, timeoutMs);
+    proc.on("exit", () => clearTimeout(t));
+  });
+}
 
 export type TradeAnalysis = {
   confidence: number;
@@ -70,18 +92,7 @@ Respond with JSON only, no markdown:
 {"confidence": 0.0-1.0, "kelly_fraction": 0.0-0.1, "reasoning": "brief explanation", "enter": true/false}`;
 
   try {
-    const { stdout } = await execFileAsync(
-      "claude",
-      ["--print", "--model", "claude-haiku-4-5-20251001", prompt],
-      {
-        timeout: 15000,
-        env: {
-          ...process.env,
-          CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '',
-          ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '',
-        },
-      }
-    );
+    const stdout = await askClaude(prompt, "claude-haiku-4-5-20251001", 15000);
 
     const jsonMatch = stdout.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
