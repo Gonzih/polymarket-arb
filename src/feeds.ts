@@ -1,6 +1,39 @@
 import WebSocket from "ws";
 import { log } from "./logger.js";
 
+// ---------------------------------------------------------------------------
+// Dune Analytics stub
+// ---------------------------------------------------------------------------
+// CLOB /trades?market=<token> requires authentication (returns 401 without API
+// key). Dune Analytics is the recommended path for historical Polymarket trade
+// reconstruction. This stub has the correct API structure and will be activated
+// once DUNE_API_KEY is set in the environment.
+
+const DUNE_API_BASE = "https://api.dune.com/api/v1";
+
+export type DuneRow = Record<string, unknown>;
+
+export async function duneFeed(queryId: number): Promise<DuneRow[]> {
+  const apiKey = process.env.DUNE_API_KEY;
+  if (!apiKey) {
+    log("info", { source: "dune", event: "no_api_key", message: "no API key configured, skipping" });
+    return [];
+  }
+
+  const url = `${DUNE_API_BASE}/query/${queryId}/results?limit=1000`;
+  const res = await fetch(url, {
+    headers: { "X-Dune-API-Key": apiKey },
+  });
+
+  if (!res.ok) {
+    log("warn", { source: "dune", event: "fetch_error", status: res.status, queryId });
+    return [];
+  }
+
+  const data = (await res.json()) as { result?: { rows?: DuneRow[] } };
+  return data.result?.rows ?? [];
+}
+
 export type PriceTick = {
   symbol: "BTC" | "ETH";
   price: number;
