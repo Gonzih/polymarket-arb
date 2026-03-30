@@ -2,11 +2,8 @@
 // Triggers: scheduled (4-6h) + whale trade + odds delta (7%)
 // Output: { signal: 'DIRECTIONAL'|'VOLATILITY'|'PASS', edge, spread, syntheticProb, agents }
 
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { runClaude } from "./claude.js";
 import { log } from "./logger.js";
-
-const execFileAsync = promisify(execFile);
 
 export type SimulationSignal = 'DIRECTIONAL' | 'VOLATILITY' | 'PASS';
 
@@ -78,22 +75,8 @@ Current market price: ${(marketOdds * 100).toFixed(1)}% YES
 Provide your probability estimate and reasoning.`;
 
   try {
-    const { stdout } = await execFileAsync(
-      "claude",
-      ["--print", "--model", "claude-haiku-4-5-20251001", prompt],
-      {
-        timeout: 15000,
-        env: {
-          ...process.env,
-          CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? '',
-          ANTHROPIC_AUTH_TOKEN:
-            process.env.ANTHROPIC_AUTH_TOKEN ??
-            process.env.CLAUDE_CODE_OAUTH_TOKEN ??
-            '',
-        },
-      }
-    );
-    return parseAgentResponse(agent.name, stdout.trim());
+    const stdout = await runClaude(prompt, "claude-haiku-4-5-20251001", 15000);
+    return parseAgentResponse(agent.name, stdout);
   } catch {
     return { agent: agent.name, prob: 0.5, reasoning: 'Agent failed — using fallback probability.' };
   }

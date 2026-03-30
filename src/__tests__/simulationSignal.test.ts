@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// ── Mock child_process + logger ──────────────────────────────────────────────
+// ── Mock claude helper + logger ───────────────────────────────────────────────
 
-const mockExecFile = vi.hoisted(() => vi.fn());
+const mockRunClaude = vi.hoisted(() => vi.fn<() => Promise<string>>());
 
-vi.mock('child_process', () => {
-  const execFileMock = vi.fn();
-  (execFileMock as any)[Symbol.for('nodejs.util.promisify.custom')] = mockExecFile;
-  return { execFile: execFileMock };
-});
+vi.mock('../claude.js', () => ({
+  runClaude: mockRunClaude,
+  analyzeTradeOpportunity: vi.fn(),
+}));
 
 const mockLog = vi.hoisted(() => vi.fn());
 vi.mock('../logger.js', () => ({ log: mockLog }));
@@ -23,11 +22,8 @@ import type { SimulationTrigger, SimulationResult, SimulationSignal } from '../s
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function agentResponse(prob: number, agentName: string, reasoning = 'test reason'): { stdout: string; stderr: string } {
-  return {
-    stdout: `P(YES)=${prob.toFixed(2)} | ${agentName}: ${reasoning}`,
-    stderr: '',
-  };
+function agentResponse(prob: number, agentName: string, reasoning = 'test reason'): string {
+  return `P(YES)=${prob.toFixed(2)} | ${agentName}: ${reasoning}`;
 }
 
 const baseTrigger: SimulationTrigger = {
@@ -46,8 +42,8 @@ describe('runSimulation — debate engine', () => {
     vi.clearAllMocks();
   });
 
-  it('calls execFile 4 times (one per agent) and returns 4 agent estimates', async () => {
-    mockExecFile
+  it('calls runClaude 4 times (one per agent) and returns 4 agent estimates', async () => {
+    mockRunClaude
       .mockResolvedValueOnce(agentResponse(0.60, 'Bull'))
       .mockResolvedValueOnce(agentResponse(0.40, 'Bear'))
       .mockResolvedValueOnce(agentResponse(0.55, 'Regulator'))
@@ -55,13 +51,13 @@ describe('runSimulation — debate engine', () => {
 
     const result = await runSimulation(baseTrigger);
 
-    expect(mockExecFile).toHaveBeenCalledTimes(4);
+    expect(mockRunClaude).toHaveBeenCalledTimes(4);
     expect(result.agents).toHaveLength(4);
     expect(result.agents.map((a) => a.agent)).toEqual(['Bull', 'Bear', 'Regulator', 'Contrarian']);
   });
 
   it('includes parsed probability and reasoning for each agent', async () => {
-    mockExecFile
+    mockRunClaude
       .mockResolvedValueOnce(agentResponse(0.70, 'Bull', 'Strong institutional flow'))
       .mockResolvedValueOnce(agentResponse(0.30, 'Bear', 'Retail decay visible'))
       .mockResolvedValueOnce(agentResponse(0.50, 'Regulator', 'Regulatory neutral'))
@@ -76,7 +72,7 @@ describe('runSimulation — debate engine', () => {
   });
 
   it('uses fallback prob 0.5 when an agent fails, without crashing', async () => {
-    mockExecFile
+    mockRunClaude
       .mockResolvedValueOnce(agentResponse(0.60, 'Bull'))
       .mockRejectedValueOnce(new Error('timeout'))
       .mockResolvedValueOnce(agentResponse(0.55, 'Regulator'))
@@ -90,15 +86,14 @@ describe('runSimulation — debate engine', () => {
     expect(result.agents[3].prob).toBe(0.5);
   });
 
-  it('uses claude-haiku-4-5-20251001 model for all agents', async () => {
-    mockExecFile.mockResolvedValue(agentResponse(0.50, 'Agent'));
+  it('calls runClaude with claude-haiku-4-5-20251001 model for all agents', async () => {
+    mockRunClaude.mockResolvedValue(agentResponse(0.50, 'Agent'));
 
     await runSimulation(baseTrigger);
 
-    for (const call of mockExecFile.mock.calls) {
-      const args = call[1] as string[];
-      expect(args).toContain('--model');
-      expect(args).toContain('claude-haiku-4-5-20251001');
+    for (const call of mockRunClaude.mock.calls) {
+      const model = call[1] as string;
+      expect(model).toBe('claude-haiku-4-5-20251001');
     }
   });
 });
@@ -112,7 +107,7 @@ describe('runSimulation — aggregation math', () => {
 
   it('computes syntheticProb as median of 4 estimates', async () => {
     // [0.40, 0.50, 0.60, 0.70] → sorted → median = (0.50+0.60)/2 = 0.55
-    mockExecFile
+    mockRunClaude
       .mockResolvedValueOnce(agentResponse(0.70, 'Bull'))
       .mockResolvedValueOnce(agentResponse(0.40, 'Bear'))
       .mockResolvedValueOnce(agentResponse(0.60, 'Regulator'))
@@ -124,7 +119,7 @@ describe('runSimulation — aggregation math', () => {
 
   it('computes spread as max - min of agent probs', async () => {
     // max=0.80, min=0.20 → spread=0.60
-    mockExecFile
+    mockRunClaude
       .mockResolvedValueOnce(agentResponse(0.80, 'Bull'))
       .mockResolvedValueOnce(agentResponse(0.20, 'Bear'))
       .mockResolvedValueOnce(agentResponse(0.50, 'Regulator'))
@@ -136,7 +131,7 @@ describe('runSimulation — aggregation math', () => {
 
   it('computes edge as syntheticProb - marketOdds', async () => {
     // syntheticProb = median([0.55, 0.55, 0.65, 0.65]) = 0.60, marketOdds = 0.50 → edge = 0.10
-    mockExecFile
+    mockRunClaude
       .mockResolvedValueOnce(agentResponse(0.65, 'Bull'))
       .mockResolvedValueOnce(agentResponse(0.55, 'Bear'))
       .mockResolvedValueOnce(agentResponse(0.65, 'Regulator'))
@@ -149,7 +144,7 @@ describe('runSimulation — aggregation math', () => {
 
   it('classifies DIRECTIONAL when edge>10% and spread<20%', async () => {
     // edge = 0.12 (12%), spread = 0.05 (5%) → DIRECTIONAL
-    mockExecFile
+    mockRunClaude
       .mockResolvedValueOnce(agentResponse(0.64, 'Bull'))
       .mockResolvedValueOnce(agentResponse(0.60, 'Bear'))
       .mockResolvedValueOnce(agentResponse(0.64, 'Regulator'))
@@ -162,7 +157,7 @@ describe('runSimulation — aggregation math', () => {
 
   it('classifies VOLATILITY when spread>30%', async () => {
     // spread = 0.80 → VOLATILITY
-    mockExecFile
+    mockRunClaude
       .mockResolvedValueOnce(agentResponse(0.90, 'Bull'))
       .mockResolvedValueOnce(agentResponse(0.10, 'Bear'))
       .mockResolvedValueOnce(agentResponse(0.50, 'Regulator'))
@@ -174,7 +169,7 @@ describe('runSimulation — aggregation math', () => {
 
   it('classifies PASS when edge<=10% and spread<=30%', async () => {
     // All agree near market odds → small edge, small spread → PASS
-    mockExecFile
+    mockRunClaude
       .mockResolvedValueOnce(agentResponse(0.52, 'Bull'))
       .mockResolvedValueOnce(agentResponse(0.50, 'Bear'))
       .mockResolvedValueOnce(agentResponse(0.52, 'Regulator'))
@@ -185,7 +180,7 @@ describe('runSimulation — aggregation math', () => {
   });
 
   it('includes timestamp in result', async () => {
-    mockExecFile.mockResolvedValue(agentResponse(0.50, 'Agent'));
+    mockRunClaude.mockResolvedValue(agentResponse(0.50, 'Agent'));
     const before = Date.now();
     const result = await runSimulation(baseTrigger);
     const after = Date.now();
